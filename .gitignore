@@ -1,0 +1,7 @@
+.next/
+node_modules/
+data/*.db
+data/*.db-*
+.env
+.env.local
+*.tsbuildinfo
