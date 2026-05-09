@@ -1,10 +1,9 @@
-import { generateScheduleAction, saveGoalProgressAction, saveProgressAction } from "./actions";
-import { buildTimetable } from "@/lib/fallback-scheduler";
-import { getDashboard } from "@/lib/db";
-import { buildGoalDailySuggestions, buildGoalWorkCandidates } from "@/lib/goal-work";
+import { createSongAction, saveSongProgressAction, updateSongStepsAction } from "./actions";
+import { calculateCompletionRate, songStatusLabels, stepStatusLabels } from "@/lib/dtm";
+import { generateDtmSuggestion } from "@/lib/dtm-ai";
+import { getDtmDashboard } from "@/lib/db";
 import { todayInJapan } from "@/lib/dates";
-import { normalizeDate, parseGoals } from "@/lib/parsers";
-import { ScheduleItem, StoredGoalProgressLog, StoredTask } from "@/lib/types";
+import { ProductionStepStatus, SongStatus, StoredSong, StoredSongProgressLog, StoredSongStep } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -14,258 +13,203 @@ type PageProps = {
 
 export default async function Home({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
-  const today = todayInJapan();
-  const selectedDate = normalizeDate(String(params.date ?? ""), today);
-  const { plan, tasks, progress, goalProgressLogs } = getDashboard(selectedDate);
-  const goalInputs = plan ? parseGoals(plan.goalsInput, selectedDate) : [];
-  const displayTimetable = plan ? getDisplayTimetable(plan, tasks, selectedDate) : [];
+  const selectedSongId = Number(params.song ?? "");
+  const { songs, selectedSong, steps, logs } = getDtmDashboard(Number.isInteger(selectedSongId) ? selectedSongId : undefined);
+  const suggestion = selectedSong ? await generateDtmSuggestion({ song: selectedSong, steps, logs }) : null;
+  const completionRate = calculateCompletionRate(steps);
 
   return (
-    <main className="app-shell">
+    <main className="app-shell dtm-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Local MVP</p>
-          <h1>AI秘書タスク管理</h1>
+          <p className="eyebrow">DTM Production MVP</p>
+          <h1>DTM進捗管理AI</h1>
+          <p className="topbar-copy">曲を途中で止めず、小さい完成を積み上げるための制作継続支援アプリです。</p>
         </div>
-        <div className="status-pill">{process.env.OPENAI_API_KEY ? "OpenAI API 接続" : "ローカル簡易生成"}</div>
+        <div className="status-pill">{process.env.OPENAI_API_KEY ? "AI提案: OpenAI" : "AI提案: ローカル"}</div>
       </header>
 
-      <section className="workspace">
-        <form action={generateScheduleAction} className="panel composer">
+      <section className="dtm-layout">
+        <aside className="panel song-sidebar">
           <div className="section-title">
-            <h2>今日の入力</h2>
-            <button type="submit">時間割を作る</button>
+            <h2>曲一覧</h2>
           </div>
+          <SongList songs={songs} selectedSongId={selectedSong?.id ?? null} />
+          <SongForm />
+        </aside>
 
-          <div className="grid-3">
-            <label>
-              日付
-              <input type="date" name="date" defaultValue={selectedDate} />
-            </label>
-            <label>
-              起床
-              <input type="time" name="wakeTime" defaultValue={plan?.wakeTime ?? "07:00"} />
-            </label>
-            <label>
-              就寝
-              <input type="time" name="sleepTime" defaultValue={plan?.sleepTime ?? "23:00"} />
-            </label>
-          </div>
-
-          <label>
-            今日やること
-            <textarea
-              name="naturalInput"
-              rows={5}
-              defaultValue={plan?.naturalInput ?? ""}
-              placeholder="企画書を進める。山田さんに返信。請求書を確認。"
-            />
-          </label>
-
-          <div className="grid-2">
-            <label>
-              タスク詳細
-              <textarea
-                name="taskInput"
-                rows={7}
-                placeholder={"企画書ドラフト, high, 90, 2026-05-08, 初稿まで\nメール整理, medium, 30, 2026-05-06"}
-              />
-            </label>
-            <label>
-              固定予定
-              <textarea
-                name="fixedInput"
-                rows={7}
-                defaultValue={plan?.fixedInput ?? ""}
-                placeholder={"09:30-10:00 朝会\n13:00-14:00 顧客MTG"}
-              />
-            </label>
-          </div>
-
-          <label>
-            長期目標
-            <textarea
-              name="goalsInput"
-              rows={4}
-              defaultValue={plan?.goalsInput ?? ""}
-              placeholder={"資格試験, 2026-07-31, 3600, 問題集を1周\n新規サービス案, 2026-06-15, 1200"}
-            />
-          </label>
-        </form>
-
-        <section className="panel schedule-panel">
-          <div className="section-title">
-            <div>
-              <h2>{selectedDate} の時間割</h2>
-              {plan ? <p>{plan.schedule.summary}</p> : <p>入力後にここへ表示されます。</p>}
-            </div>
-          </div>
-          {plan ? <Timetable items={displayTimetable} /> : <EmptyState />}
+        <section className="dtm-main">
+          {selectedSong ? (
+            <>
+              <SongDetail song={selectedSong} completionRate={completionRate} />
+              <div className="dtm-grid">
+                <StepBoard songId={selectedSong.id} steps={steps} />
+                <SuggestionPanel suggestion={suggestion} />
+              </div>
+              <ProgressLogPanel song={selectedSong} logs={logs} />
+            </>
+          ) : (
+            <section className="panel empty-state">
+              <strong>最初の曲を登録しましょう</strong>
+              <p>曲名、ジャンル、目標完成日を入れると制作工程と進捗ログを管理できます。</p>
+            </section>
+          )}
         </section>
-      </section>
-
-      <section className="bottom-grid">
-        <TaskProgress date={selectedDate} tasks={tasks} progressNotes={progress?.notes ?? ""} />
-        <GoalSuggestions plan={plan} />
-        <GoalProgressPanel date={selectedDate} goals={goalInputs.map((goal) => goal.title)} logs={goalProgressLogs} />
       </section>
     </main>
   );
 }
 
-function Timetable({ items }: { items: ScheduleItem[] }) {
-  if (items.length === 0) {
-    return <EmptyState />;
+function SongList({ songs, selectedSongId }: { songs: StoredSong[]; selectedSongId: number | null }) {
+  if (songs.length === 0) {
+    return <p className="muted">まだ曲がありません。</p>;
   }
 
   return (
-    <div className="timeline">
-      {items.map((item, index) => (
-        <div className={`timeline-row type-${item.type}`} key={`${item.startTime}-${item.endTime}-${index}`}>
-          <time>
-            {item.startTime}-{item.endTime}
-          </time>
-          <div>
-            <strong>{item.title}</strong>
-            <p>{item.reason}</p>
-          </div>
-        </div>
+    <div className="song-list">
+      {songs.map((song) => (
+        <a className={`song-link ${song.id === selectedSongId ? "active" : ""}`} href={`/?song=${song.id}`} key={song.id}>
+          <strong>{song.title}</strong>
+          <small>
+            {song.genre || "ジャンル未設定"} / {songStatusLabels[song.currentStatus]}
+          </small>
+        </a>
       ))}
     </div>
   );
 }
 
-function getDisplayTimetable(plan: NonNullable<Awaited<ReturnType<typeof getDashboard>>["plan"]>, tasks: StoredTask[], date: string) {
-  if (Array.isArray(plan.schedule.timetable) && plan.schedule.timetable.length > 0) {
-    return plan.schedule.timetable;
-  }
-
-  const goals = parseGoals(plan.goalsInput, date);
-  const dailySuggestions = buildGoalDailySuggestions(goals, date);
-  const goalCandidates = plan.schedule.goalWorkCandidates ?? buildGoalWorkCandidates(goals, dailySuggestions);
-  const sourceTasks =
-    plan.schedule.tasks.length > 0
-      ? plan.schedule.tasks
-      : tasks
-          .filter((task) => task.status !== "completed")
-          .map((task) => ({
-            title: task.title,
-            priority: task.priority,
-            durationMinutes: task.durationMinutes,
-            deadline: task.deadline,
-            notes: task.notes
-          }));
-
-  return buildTimetable({
-    wakeTime: plan.wakeTime,
-    sleepTime: plan.sleepTime,
-    fixedEvents: plan.schedule.fixedEvents,
-    tasks: sourceTasks,
-    goalCandidates
-  });
-}
-
-function TaskProgress({
-  date,
-  tasks,
-  progressNotes
-}: {
-  date: string;
-  tasks: StoredTask[];
-  progressNotes: string;
-}) {
+function SongForm() {
   return (
-    <form action={saveProgressAction} className="panel">
-      <div className="section-title">
-        <h2>進捗</h2>
-        <button type="submit" className="secondary">
-          保存
-        </button>
-      </div>
-      <input type="hidden" name="date" value={date} />
-
-      <div className="task-list">
-        {tasks.length === 0 ? (
-          <p className="muted">まだタスクがありません。</p>
-        ) : (
-          tasks.map((task) => (
-            <label className={`task-row ${task.status}`} key={task.id}>
-              <input
-                type="checkbox"
-                name="completedTaskIds"
-                value={task.id}
-                defaultChecked={task.status === "completed"}
-                disabled={task.status === "completed"}
-              />
-              <span>
-                <strong>{task.title}</strong>
-                <small>
-                  {priorityLabel(task.priority)} / {task.durationMinutes}分 / 締切 {task.deadline}
-                  {task.status === "carryover" ? " / 未完了から再配置" : ""}
-                </small>
-              </span>
-            </label>
-          ))
-        )}
-      </div>
-
+    <form action={createSongAction} className="song-form">
+      <h3>曲を追加</h3>
       <label>
-        1日の終わりのメモ
-        <textarea name="progressNotes" rows={5} defaultValue={progressNotes} placeholder="完了したこと、詰まったこと、明日に回す理由。" />
+        曲名
+        <input name="title" placeholder="新曲デモ" required />
       </label>
+      <label>
+        ジャンル
+        <input name="genre" placeholder="Future Bass / Rock / Ballad" />
+      </label>
+      <label>
+        目標完成日
+        <input name="targetDate" type="date" defaultValue={todayInJapan()} />
+      </label>
+      <label>
+        現在状態
+        <select name="currentStatus" defaultValue="idea">
+          {songStatusOptions.map((status) => (
+            <option key={status} value={status}>
+              {songStatusLabels[status]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        メモ
+        <textarea name="memo" rows={4} placeholder="参考曲、方向性、完成条件など" />
+      </label>
+      <button type="submit">追加</button>
     </form>
   );
 }
 
-function GoalSuggestions({ plan }: { plan: Awaited<ReturnType<typeof getDashboard>>["plan"] }) {
+function SongDetail({ song, completionRate }: { song: StoredSong; completionRate: number }) {
   return (
-    <section className="panel">
-      <div className="section-title">
-        <h2>目標の逆算</h2>
+    <section className="panel song-hero">
+      <div>
+        <p className="eyebrow">Selected Song</p>
+        <h2>{song.title}</h2>
+        <p className="muted">
+          {song.genre || "ジャンル未設定"} / 目標完成日 {song.targetDate || "未設定"} / {songStatusLabels[song.currentStatus]}
+        </p>
+        {song.memo ? <p className="song-memo">{song.memo}</p> : null}
       </div>
-      {plan && plan.schedule.goalDailySuggestions.length > 0 ? (
-        <div className="goal-list">
-          {plan.schedule.goalDailySuggestions.map((goal) => (
-            <article key={`${goal.goalTitle}-${goal.targetDate}`} className="goal-row">
-              <strong>{goal.goalTitle}</strong>
-              <p>
-                今日 {goal.suggestedMinutesToday}分 / 達成日 {goal.targetDate}
-              </p>
-              <small>{goal.reason}</small>
-            </article>
-          ))}
+      <div className="completion-box">
+        <strong>{completionRate}%</strong>
+        <span>完成</span>
+        <div className="completion-bar">
+          <div style={{ width: `${completionRate}%` }} />
         </div>
-      ) : (
-        <p className="muted">長期目標を入れると、今日の作業量が表示されます。</p>
-      )}
-      {plan ? <p className="carryover">{plan.schedule.carryoverStrategy}</p> : null}
+      </div>
     </section>
   );
 }
 
-function GoalProgressPanel({ date, goals, logs }: { date: string; goals: string[]; logs: StoredGoalProgressLog[] }) {
+function StepBoard({ songId, steps }: { songId: number; steps: StoredSongStep[] }) {
+  return (
+    <section className="panel">
+      <div className="section-title">
+        <h2>制作工程</h2>
+        <button type="submit" form="song-steps-form" className="secondary">
+          工程をまとめて更新
+        </button>
+      </div>
+      <form action={updateSongStepsAction} className="step-list" id="song-steps-form">
+        <input type="hidden" name="songId" value={songId} />
+        {steps.map((step) => (
+          <div className={`step-row status-${step.status}`} key={step.id}>
+            <strong>{step.name}</strong>
+            <select name={`stepStatus:${step.id}`} defaultValue={step.status}>
+              {stepStatusOptions.map((status) => (
+                <option key={status} value={status}>
+                  {stepStatusLabels[status]}
+                </option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </form>
+    </section>
+  );
+}
+
+function SuggestionPanel({ suggestion }: { suggestion: Awaited<ReturnType<typeof generateDtmSuggestion>> | null }) {
+  return (
+    <section className="panel suggestion-panel">
+      <div className="section-title">
+        <h2>AI提案</h2>
+        <span className="mini-pill">{suggestion?.source === "openai" ? "OpenAI" : "Local"}</span>
+      </div>
+      {suggestion ? (
+        <div className="suggestion-list">
+          <SuggestionItem label="次にやること" value={suggestion.nextTask} />
+          <SuggestionItem label="小さい完成目標" value={suggestion.microGoal} />
+          <SuggestionItem label="軽いアドバイス" value={suggestion.advice} />
+          <SuggestionItem label="次回候補" value={suggestion.nextSessionCandidate} />
+        </div>
+      ) : (
+        <p className="muted">曲を登録すると、次の一歩を提案します。</p>
+      )}
+    </section>
+  );
+}
+
+function SuggestionItem({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="suggestion-item">
+      <small>{label}</small>
+      <p>{value}</p>
+    </article>
+  );
+}
+
+function ProgressLogPanel({ song, logs }: { song: StoredSong; logs: StoredSongProgressLog[] }) {
   return (
     <section className="panel progress-log-panel">
       <div className="section-title">
-        <h2>長期目標ログ</h2>
-        <button type="submit" form="goal-progress-form" className="secondary">
+        <h2>進捗ログ</h2>
+        <button type="submit" form="song-progress-form" className="secondary">
           保存
         </button>
       </div>
-
-      <form action={saveGoalProgressAction} id="goal-progress-form" className="goal-log-form">
-        <input type="hidden" name="goalLogDate" value={date} />
-        <label>
-          目標
-          <input name="goalTitle" list="goal-options" placeholder="1曲完成" required />
-          <datalist id="goal-options">
-            {goals.map((goal) => (
-              <option key={goal} value={goal} />
-            ))}
-          </datalist>
-        </label>
-
-        <div className="grid-2 compact-grid">
+      <form action={saveSongProgressAction} id="song-progress-form" className="goal-log-form">
+        <input type="hidden" name="songId" value={song.id} />
+        <div className="grid-3">
+          <label>
+            日付
+            <input name="date" type="date" defaultValue={todayInJapan()} />
+          </label>
           <label>
             作業時間
             <input name="workMinutes" type="number" min="0" max="1440" step="5" defaultValue={30} />
@@ -281,38 +225,33 @@ function GoalProgressPanel({ date, goals, logs }: { date: string; goals: string[
             </select>
           </label>
         </div>
-
-        <label>
-          やったこと
-          <textarea name="did" rows={3} />
-        </label>
-        <label>
-          進んだこと
-          <textarea name="progressed" rows={3} />
-        </label>
-        <label>
-          詰まったこと
-          <textarea name="blocked" rows={3} />
-        </label>
-        <label>
-          次にやりたいこと
-          <textarea name="nextAction" rows={3} />
-        </label>
+        <div className="grid-3">
+          <label>
+            やったこと
+            <textarea name="did" rows={4} placeholder="サビのコードを作った" />
+          </label>
+          <label>
+            詰まったこと
+            <textarea name="blocked" rows={4} placeholder="メロディが単調に感じる" />
+          </label>
+          <label>
+            次にやりたいこと
+            <textarea name="nextAction" rows={4} placeholder="8小節だけメロディを作る" />
+          </label>
+        </div>
       </form>
 
       <div className="log-list">
         {logs.length === 0 ? (
-          <p className="muted">まだログがありません。</p>
+          <p className="muted">まだ進捗ログがありません。</p>
         ) : (
           logs.map((log) => (
             <article className="log-row" key={log.id}>
               <strong>
-                {log.date} / {log.goalTitle}
+                {log.date} / {log.workMinutes}分 / 評価 {log.rating}
               </strong>
-              <p>
-                {log.workMinutes}分 / 評価 {log.rating}
-              </p>
-              <small>{[log.did, log.progressed, log.blocked, log.nextAction].filter(Boolean).join(" / ")}</small>
+              <p>{log.did || "作業内容未記入"}</p>
+              <small>{[log.blocked && `詰まり: ${log.blocked}`, log.nextAction && `次: ${log.nextAction}`].filter(Boolean).join(" / ")}</small>
             </article>
           ))
         )}
@@ -321,15 +260,5 @@ function GoalProgressPanel({ date, goals, logs }: { date: string; goals: string[
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="empty-state">
-      <strong>時間割はまだありません</strong>
-      <p>左のフォームから今日の材料を入れて生成します。</p>
-    </div>
-  );
-}
-
-function priorityLabel(priority: StoredTask["priority"]) {
-  return priority === "high" ? "高" : priority === "medium" ? "中" : "低";
-}
+const songStatusOptions: SongStatus[] = ["idea", "writing", "arranging", "mixing", "mastering", "posted", "paused"];
+const stepStatusOptions: ProductionStepStatus[] = ["not_started", "in_progress", "done"];

@@ -2,10 +2,21 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getCarryoverTasks, replacePendingTasksForDate, saveGoalProgressLog, savePlan, saveProgress } from "@/lib/db";
+import {
+  createSong,
+  getCarryoverTasks,
+  replacePendingTasksForDate,
+  saveGoalProgressLog,
+  savePlan,
+  saveProgress,
+  saveSongProgressLog,
+  updateSongStep,
+  updateSongSteps
+} from "@/lib/db";
 import { todayInJapan } from "@/lib/dates";
 import { normalizeDate } from "@/lib/parsers";
 import { generateSchedule } from "@/lib/openai-scheduler";
+import { ProductionStepStatus, SongStatus } from "@/lib/types";
 
 export async function generateScheduleAction(formData: FormData) {
   const today = todayInJapan();
@@ -82,6 +93,81 @@ export async function saveGoalProgressAction(formData: FormData) {
   redirect(`/?date=${date}`);
 }
 
+export async function createSongAction(formData: FormData) {
+  const today = todayInJapan();
+  const title = read(formData, "title");
+  if (!title) {
+    revalidatePath("/");
+    redirect("/");
+  }
+
+  const songId = createSong({
+    title,
+    genre: read(formData, "genre"),
+    targetDate: normalizeDate(read(formData, "targetDate"), today),
+    memo: read(formData, "memo"),
+    currentStatus: asSongStatus(read(formData, "currentStatus"))
+  });
+
+  revalidatePath("/");
+  redirect(`/?song=${songId}`);
+}
+
+export async function updateSongStepAction(formData: FormData) {
+  const songId = Number(read(formData, "songId"));
+  const stepId = Number(read(formData, "stepId"));
+
+  if (Number.isInteger(songId) && Number.isInteger(stepId)) {
+    updateSongStep({
+      songId,
+      stepId,
+      status: asStepStatus(read(formData, "status"))
+    });
+  }
+
+  revalidatePath("/");
+  redirect(songId ? `/?song=${songId}` : "/");
+}
+
+export async function updateSongStepsAction(formData: FormData) {
+  const songId = Number(read(formData, "songId"));
+  const steps = Array.from(formData.entries())
+    .filter(([key]) => key.startsWith("stepStatus:"))
+    .map(([key, value]) => ({
+      stepId: Number(key.replace("stepStatus:", "")),
+      status: asStepStatus(typeof value === "string" ? value : "")
+    }))
+    .filter((step) => Number.isInteger(step.stepId));
+
+  if (Number.isInteger(songId) && steps.length > 0) {
+    updateSongSteps({ songId, steps });
+  }
+
+  revalidatePath("/");
+  redirect(songId ? `/?song=${songId}` : "/");
+}
+
+export async function saveSongProgressAction(formData: FormData) {
+  const today = todayInJapan();
+  const songId = Number(read(formData, "songId"));
+  const date = normalizeDate(read(formData, "date"), today);
+
+  if (Number.isInteger(songId)) {
+    saveSongProgressLog({
+      songId,
+      date,
+      workMinutes: clamp(Number(read(formData, "workMinutes")), 0, 1440, 30),
+      did: read(formData, "did"),
+      blocked: read(formData, "blocked"),
+      nextAction: read(formData, "nextAction"),
+      rating: clamp(Number(read(formData, "rating")), 1, 5, 3)
+    });
+  }
+
+  revalidatePath("/");
+  redirect(songId ? `/?song=${songId}` : "/");
+}
+
 function read(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
@@ -90,4 +176,14 @@ function read(formData: FormData, key: string) {
 function clamp(value: number, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function asSongStatus(value: string): SongStatus {
+  const allowed: SongStatus[] = ["idea", "writing", "arranging", "mixing", "mastering", "posted", "paused"];
+  return allowed.includes(value as SongStatus) ? (value as SongStatus) : "idea";
+}
+
+function asStepStatus(value: string): ProductionStepStatus {
+  const allowed: ProductionStepStatus[] = ["not_started", "in_progress", "done"];
+  return allowed.includes(value as ProductionStepStatus) ? (value as ProductionStepStatus) : "not_started";
 }

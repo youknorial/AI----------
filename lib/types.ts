@@ -86,3 +86,47 @@ export type StoredGoalProgressLog = {
   rating: number;
   createdAt: string;
 };
+
+export type SongStatus = "idea" | "writing" | "arranging" | "mixing" | "mastering" | "posted" | "paused";
+
+export type ProductionStepStatus = "not_started" | "in_progress" | "done";
+
+export type StoredSong = {
+  id: number;
+  title: string;
+  genre: string;
+  targetDate: string;
+  memo: string;
+  currentStatus: SongStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StoredSongStep = {
+  id: number;
+  songId: number;
+  name: string;
+  position: number;
+  status: ProductionStepStatus;
+  updatedAt: string;
+};
+
+export type StoredSongProgressLog = {
+  id: number;
+  songId: number;
+  date: string;
+  workMinutes: number;
+  did: string;
+  blocked: string;
+  nextAction: string;
+  rating: number;
+  createdAt: string;
+};
+
+export type DtmSuggestion = {
+  nextTask: string;
+  microGoal: string;
+  advice: string;
+  nextSessionCandidate: string;
+  source: "openai" | "local";
+};

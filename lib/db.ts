@@ -1,8 +1,20 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { productionStepNames } from "./dtm";
 import { addDays } from "./parsers";
-import { GeneratedSchedule, StoredGoalProgressLog, StoredPlan, StoredTask, TaskInput } from "./types";
+import {
+  GeneratedSchedule,
+  ProductionStepStatus,
+  SongStatus,
+  StoredGoalProgressLog,
+  StoredPlan,
+  StoredSong,
+  StoredSongProgressLog,
+  StoredSongStep,
+  StoredTask,
+  TaskInput
+} from "./types";
 
 const dataDir = path.join(process.cwd(), "data");
 const dbPath = path.join(dataDir, "app.db");
@@ -70,6 +82,47 @@ export function getDashboard(date: string) {
       : null,
     goalProgressLogs: goalProgressLogs.map(mapGoalProgressLog)
   };
+}
+
+export function getDtmDashboard(selectedSongId?: number) {
+  const database = getDb();
+  const songs = (
+    database
+      .prepare(
+        `SELECT id, title, genre, target_date, memo, current_status, created_at, updated_at
+         FROM songs
+         ORDER BY updated_at DESC, id DESC`
+      )
+      .all() as SongRow[]
+  ).map(mapSong);
+  const selectedSong = songs.find((song) => song.id === selectedSongId) ?? songs[0] ?? null;
+
+  if (!selectedSong) {
+    return { songs, selectedSong: null, steps: [], logs: [] };
+  }
+
+  const steps = (
+    database
+      .prepare(
+        `SELECT id, song_id, name, position, status, updated_at
+         FROM song_steps
+         WHERE song_id = ?
+         ORDER BY position ASC`
+      )
+      .all(selectedSong.id) as SongStepRow[]
+  ).map(mapSongStep);
+  const logs = (
+    database
+      .prepare(
+        `SELECT id, song_id, date, work_minutes, did, blocked, next_action, rating, created_at
+         FROM song_progress_logs
+         WHERE song_id = ?
+         ORDER BY date DESC, created_at DESC`
+      )
+      .all(selectedSong.id) as SongProgressLogRow[]
+  ).map(mapSongProgressLog);
+
+  return { songs, selectedSong, steps, logs };
 }
 
 export function getCarryoverTasks(date: string) {
@@ -178,6 +231,84 @@ export function saveGoalProgressLog(input: {
     );
 }
 
+export function createSong(input: { title: string; genre: string; targetDate: string; memo: string; currentStatus: SongStatus }) {
+  const database = getDb();
+  const transaction = database.transaction(() => {
+    const result = database
+      .prepare(
+        `INSERT INTO songs (title, genre, target_date, memo, current_status)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(input.title, input.genre, input.targetDate, input.memo, input.currentStatus);
+    const songId = Number(result.lastInsertRowid);
+    const insertStep = database.prepare(
+      `INSERT INTO song_steps (song_id, name, position, status)
+       VALUES (?, ?, ?, 'not_started')`
+    );
+
+    productionStepNames.forEach((name, index) => {
+      insertStep.run(songId, name, index);
+    });
+
+    return songId;
+  });
+
+  return transaction();
+}
+
+export function updateSongStep(input: { songId: number; stepId: number; status: ProductionStepStatus }) {
+  const database = getDb();
+  const transaction = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE song_steps
+         SET status = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND song_id = ?`
+      )
+      .run(input.status, input.stepId, input.songId);
+    database.prepare(`UPDATE songs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(input.songId);
+  });
+  transaction();
+}
+
+export function updateSongSteps(input: { songId: number; steps: { stepId: number; status: ProductionStepStatus }[] }) {
+  const database = getDb();
+  const updateStep = database.prepare(
+    `UPDATE song_steps
+     SET status = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND song_id = ?`
+  );
+  const transaction = database.transaction(() => {
+    for (const step of input.steps) {
+      updateStep.run(step.status, step.stepId, input.songId);
+    }
+    database.prepare(`UPDATE songs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(input.songId);
+  });
+  transaction();
+}
+
+export function saveSongProgressLog(input: {
+  songId: number;
+  date: string;
+  workMinutes: number;
+  did: string;
+  blocked: string;
+  nextAction: string;
+  rating: number;
+}) {
+  const database = getDb();
+  const transaction = database.transaction(() => {
+    database
+      .prepare(
+        `INSERT INTO song_progress_logs (song_id, date, work_minutes, did, blocked, next_action, rating)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(input.songId, input.date, input.workMinutes, input.did, input.blocked, input.nextAction, input.rating);
+    database.prepare(`UPDATE songs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(input.songId);
+  });
+  transaction();
+}
+
 function migrate(database: Database.Database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS tasks (
@@ -225,6 +356,38 @@ function migrate(database: Database.Database) {
       rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS songs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      genre TEXT NOT NULL DEFAULT '',
+      target_date TEXT NOT NULL DEFAULT '',
+      memo TEXT NOT NULL DEFAULT '',
+      current_status TEXT NOT NULL DEFAULT 'idea' CHECK (current_status IN ('idea', 'writing', 'arranging', 'mixing', 'mastering', 'posted', 'paused')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS song_steps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      song_id INTEGER NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'not_started' CHECK (status IN ('not_started', 'in_progress', 'done')),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS song_progress_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      song_id INTEGER NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+      date TEXT NOT NULL,
+      work_minutes INTEGER NOT NULL,
+      did TEXT NOT NULL,
+      blocked TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 }
 
@@ -260,6 +423,38 @@ type GoalProgressLogRow = {
   work_minutes: number;
   did: string;
   progressed: string;
+  blocked: string;
+  next_action: string;
+  rating: number;
+  created_at: string;
+};
+
+type SongRow = {
+  id: number;
+  title: string;
+  genre: string;
+  target_date: string;
+  memo: string;
+  current_status: SongStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+type SongStepRow = {
+  id: number;
+  song_id: number;
+  name: string;
+  position: number;
+  status: ProductionStepStatus;
+  updated_at: string;
+};
+
+type SongProgressLogRow = {
+  id: number;
+  song_id: number;
+  date: string;
+  work_minutes: number;
+  did: string;
   blocked: string;
   next_action: string;
   rating: number;
@@ -303,6 +498,44 @@ function mapGoalProgressLog(row: GoalProgressLogRow): StoredGoalProgressLog {
     workMinutes: row.work_minutes,
     did: row.did,
     progressed: row.progressed,
+    blocked: row.blocked,
+    nextAction: row.next_action,
+    rating: row.rating,
+    createdAt: row.created_at
+  };
+}
+
+function mapSong(row: SongRow): StoredSong {
+  return {
+    id: row.id,
+    title: row.title,
+    genre: row.genre,
+    targetDate: row.target_date,
+    memo: row.memo,
+    currentStatus: row.current_status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapSongStep(row: SongStepRow): StoredSongStep {
+  return {
+    id: row.id,
+    songId: row.song_id,
+    name: row.name,
+    position: row.position,
+    status: row.status,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapSongProgressLog(row: SongProgressLogRow): StoredSongProgressLog {
+  return {
+    id: row.id,
+    songId: row.song_id,
+    date: row.date,
+    workMinutes: row.work_minutes,
+    did: row.did,
     blocked: row.blocked,
     nextAction: row.next_action,
     rating: row.rating,
