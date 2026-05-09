@@ -7,8 +7,7 @@
    - Network:      http://127.0.0.1:3000
 
  ✓ Starting...
- ✓ Ready in 1687ms
+ ✓ Ready in 1789ms
  ○ Compiling / ...
- ✓ Compiled / in 924ms (691 modules)
- GET / 200 in 1397ms
- GET /?song=1 200 in 366ms
+ ✓ Compiled / in 851ms (691 modules)
+ GET / 200 in 1313ms
