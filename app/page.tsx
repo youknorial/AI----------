@@ -1,9 +1,9 @@
 import { createSongAction, saveSongProgressAction, updateSongStepsAction } from "./actions";
-import { calculateCompletionRate, songStatusLabels, stepStatusLabels } from "@/lib/dtm";
+import { calculateCompletionRate, findNextStep, songStatusLabels, stepStatusLabels } from "@/lib/dtm";
 import { generateDtmSuggestion } from "@/lib/dtm-ai";
 import { getDtmDashboard } from "@/lib/db";
 import { todayInJapan } from "@/lib/dates";
-import { ProductionStepStatus, SongStatus, StoredSong, StoredSongProgressLog, StoredSongStep } from "@/lib/types";
+import { DtmSuggestion, ProductionStepStatus, SongStatus, StoredSong, StoredSongProgressLog, StoredSongStep } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -17,45 +17,41 @@ export default async function Home({ searchParams }: PageProps) {
   const { songs, selectedSong, steps, logs } = getDtmDashboard(Number.isInteger(selectedSongId) ? selectedSongId : undefined);
   const suggestion = selectedSong ? await generateDtmSuggestion({ song: selectedSong, steps, logs }) : null;
   const completionRate = calculateCompletionRate(steps);
+  const doneCount = steps.filter((step) => step.status === "done").length;
+  const nextStep = findNextStep(steps);
 
   return (
-    <main className="app-shell dtm-shell">
-      <header className="topbar">
+    <main className="app-shell dtm-shell mobile-app">
+      <header className="mobile-topbar">
         <div>
           <p className="eyebrow">DTM Production MVP</p>
           <h1>DTM進捗管理AI</h1>
-          <p className="topbar-copy">曲を途中で止めず、小さい完成を積み上げるための制作継続支援アプリです。</p>
         </div>
         <div className="status-pill">{process.env.OPENAI_API_KEY ? "AI提案: OpenAI" : "AI提案: ローカル"}</div>
       </header>
 
-      <section className="dtm-layout">
-        <aside className="panel song-sidebar">
-          <div className="section-title">
-            <h2>曲一覧</h2>
-          </div>
-          <SongList songs={songs} selectedSongId={selectedSong?.id ?? null} />
-          <SongForm />
-        </aside>
-
-        <section className="dtm-main">
-          {selectedSong ? (
-            <>
-              <SongDetail song={selectedSong} completionRate={completionRate} />
-              <div className="dtm-grid">
-                <StepBoard songId={selectedSong.id} steps={steps} />
-                <SuggestionPanel suggestion={suggestion} />
-              </div>
-              <ProgressLogPanel song={selectedSong} logs={logs} />
-            </>
-          ) : (
-            <section className="panel empty-state">
-              <strong>最初の曲を登録しましょう</strong>
-              <p>曲名、ジャンル、目標完成日を入れると制作工程と進捗ログを管理できます。</p>
-            </section>
-          )}
+      {selectedSong ? (
+        <section className="mobile-stack">
+          <TodayFocus song={selectedSong} completionRate={completionRate} doneCount={doneCount} totalCount={steps.length} nextStepName={nextStep?.name ?? "次の工程"} suggestion={suggestion} />
+          <ProgressLogPanel song={selectedSong} logs={logs} compact />
+          <StepBoard songId={selectedSong.id} steps={steps} completionRate={completionRate} doneCount={doneCount} />
+          <SuggestionPanel suggestion={suggestion} />
+          <PastLogsPanel logs={logs} />
+          <SongMemo song={selectedSong} />
+          <SongSwitcher songs={songs} selectedSongId={selectedSong.id} />
         </section>
-      </section>
+      ) : (
+        <section className="mobile-stack">
+          <section className="panel empty-state compact-empty">
+            <strong>最初の曲を登録しましょう</strong>
+            <p>曲を1つ登録すると、今日やること、完成率、次工程が毎日すぐ見られます。</p>
+          </section>
+          <details className="panel mobile-details" open>
+            <summary>曲追加フォーム</summary>
+            <SongForm />
+          </details>
+        </section>
+      )}
     </main>
   );
 }
@@ -114,37 +110,65 @@ function SongForm() {
   );
 }
 
-function SongDetail({ song, completionRate }: { song: StoredSong; completionRate: number }) {
+function TodayFocus({
+  song,
+  completionRate,
+  doneCount,
+  totalCount,
+  nextStepName,
+  suggestion
+}: {
+  song: StoredSong;
+  completionRate: number;
+  doneCount: number;
+  totalCount: number;
+  nextStepName: string;
+  suggestion: DtmSuggestion | null;
+}) {
   return (
-    <section className="panel song-hero">
-      <div>
-        <p className="eyebrow">Selected Song</p>
-        <h2>{song.title}</h2>
-        <p className="muted">
-          {song.genre || "ジャンル未設定"} / 目標完成日 {song.targetDate || "未設定"} / {songStatusLabels[song.currentStatus]}
-        </p>
-        {song.memo ? <p className="song-memo">{song.memo}</p> : null}
-      </div>
-      <div className="completion-box">
-        <strong>{completionRate}%</strong>
-        <span>完成</span>
-        <div className="completion-bar">
-          <div style={{ width: `${completionRate}%` }} />
+    <section className="panel today-card">
+      <div className="today-header">
+        <div>
+          <p className="eyebrow">今日の制作</p>
+          <h2>{song.title}</h2>
+          <p className="muted">{song.genre || "ジャンル未設定"} / {songStatusLabels[song.currentStatus]}</p>
+        </div>
+        <div className="today-rate">
+          <strong>{completionRate}%</strong>
+          <span>{doneCount}/{totalCount || 0}</span>
         </div>
       </div>
+
+      <div className="completion-bar mobile-progress">
+        <div style={{ width: `${completionRate}%` }} />
+      </div>
+
+      <article className="today-action">
+        <small>今日やること</small>
+        <p>{suggestion?.nextTask ?? `${nextStepName}を30分だけ進めましょう`}</p>
+      </article>
+
+      <div className="next-step-strip">
+        <span>次工程</span>
+        <strong>{nextStepName}</strong>
+      </div>
+
+      <a className="primary-link-button" href="#progress-log">
+        進捗ログを追加
+      </a>
     </section>
   );
 }
 
-function StepBoard({ songId, steps }: { songId: number; steps: StoredSongStep[] }) {
+function StepBoard({ songId, steps, completionRate, doneCount }: { songId: number; steps: StoredSongStep[]; completionRate: number; doneCount: number }) {
   return (
-    <section className="panel">
-      <div className="section-title">
-        <h2>制作工程</h2>
-        <button type="submit" form="song-steps-form" className="secondary">
-          工程をまとめて更新
-        </button>
-      </div>
+    <details className="panel mobile-details">
+      <summary>
+        制作工程
+        <span>
+          {doneCount}/{steps.length} 完了 / {completionRate}%
+        </span>
+      </summary>
       <form action={updateSongStepsAction} className="step-list" id="song-steps-form">
         <input type="hidden" name="songId" value={songId} />
         {steps.map((step) => (
@@ -159,21 +183,23 @@ function StepBoard({ songId, steps }: { songId: number; steps: StoredSongStep[] 
             </select>
           </div>
         ))}
+        <button type="submit" className="secondary">
+          工程をまとめて更新
+        </button>
       </form>
-    </section>
+    </details>
   );
 }
 
 function SuggestionPanel({ suggestion }: { suggestion: Awaited<ReturnType<typeof generateDtmSuggestion>> | null }) {
   return (
-    <section className="panel suggestion-panel">
-      <div className="section-title">
-        <h2>AI提案</h2>
-        <span className="mini-pill">{suggestion?.source === "openai" ? "OpenAI" : "Local"}</span>
-      </div>
+    <details className="panel mobile-details suggestion-panel">
+      <summary>
+        AI提案の詳細
+        <span>{suggestion?.source === "openai" ? "OpenAI" : "Local"}</span>
+      </summary>
       {suggestion ? (
         <div className="suggestion-list">
-          <SuggestionItem label="次にやること" value={suggestion.nextTask} />
           <SuggestionItem label="小さい完成目標" value={suggestion.microGoal} />
           <SuggestionItem label="軽いアドバイス" value={suggestion.advice} />
           <SuggestionItem label="次回候補" value={suggestion.nextSessionCandidate} />
@@ -181,7 +207,7 @@ function SuggestionPanel({ suggestion }: { suggestion: Awaited<ReturnType<typeof
       ) : (
         <p className="muted">曲を登録すると、次の一歩を提案します。</p>
       )}
-    </section>
+    </details>
   );
 }
 
@@ -194,18 +220,18 @@ function SuggestionItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ProgressLogPanel({ song, logs }: { song: StoredSong; logs: StoredSongProgressLog[] }) {
+function ProgressLogPanel({ song, logs, compact = false }: { song: StoredSong; logs: StoredSongProgressLog[]; compact?: boolean }) {
+  const latestLog = logs[0];
+
   return (
-    <section className="panel progress-log-panel">
-      <div className="section-title">
-        <h2>進捗ログ</h2>
-        <button type="submit" form="song-progress-form" className="secondary">
-          保存
-        </button>
-      </div>
+    <details className="panel mobile-details progress-log-panel" id="progress-log">
+      <summary>
+        進捗ログを追加
+        {latestLog && compact ? <span>最新: {latestLog.date}</span> : null}
+      </summary>
       <form action={saveSongProgressAction} id="song-progress-form" className="goal-log-form">
         <input type="hidden" name="songId" value={song.id} />
-        <div className="grid-3">
+        <div className="mobile-form-grid">
           <label>
             日付
             <input name="date" type="date" defaultValue={todayInJapan()} />
@@ -225,7 +251,7 @@ function ProgressLogPanel({ song, logs }: { song: StoredSong; logs: StoredSongPr
             </select>
           </label>
         </div>
-        <div className="grid-3">
+        <div className="mobile-form-grid">
           <label>
             やったこと
             <textarea name="did" rows={4} placeholder="サビのコードを作った" />
@@ -239,24 +265,73 @@ function ProgressLogPanel({ song, logs }: { song: StoredSong; logs: StoredSongPr
             <textarea name="nextAction" rows={4} placeholder="8小節だけメロディを作る" />
           </label>
         </div>
+        <button type="submit">保存</button>
       </form>
+    </details>
+  );
+}
 
-      <div className="log-list">
-        {logs.length === 0 ? (
-          <p className="muted">まだ進捗ログがありません。</p>
-        ) : (
-          logs.map((log) => (
-            <article className="log-row" key={log.id}>
-              <strong>
-                {log.date} / {log.workMinutes}分 / 評価 {log.rating}
-              </strong>
-              <p>{log.did || "作業内容未記入"}</p>
-              <small>{[log.blocked && `詰まり: ${log.blocked}`, log.nextAction && `次: ${log.nextAction}`].filter(Boolean).join(" / ")}</small>
-            </article>
-          ))
-        )}
+function PastLogsPanel({ logs }: { logs: StoredSongProgressLog[] }) {
+  const latestLog = logs[0];
+  const olderLogs = logs.slice(1);
+
+  return (
+    <section className="panel latest-log-panel">
+      <div className="section-title compact-title">
+        <h2>最新ログ</h2>
       </div>
+      {latestLog ? <LogRow log={latestLog} /> : <p className="muted">まだ進捗ログがありません。</p>}
+      {olderLogs.length > 0 ? (
+        <details className="inline-details">
+          <summary>過去ログをすべて見る</summary>
+          <div className="log-list">
+            {olderLogs.map((log) => (
+              <LogRow log={log} key={log.id} />
+            ))}
+          </div>
+        </details>
+      ) : null}
     </section>
+  );
+}
+
+function LogRow({ log }: { log: StoredSongProgressLog }) {
+  return (
+    <article className="log-row">
+      <strong>
+        {log.date} / {log.workMinutes}分 / 評価 {log.rating}
+      </strong>
+      <p>{log.did || "作業内容未記入"}</p>
+      <small>{[log.blocked && `詰まり: ${log.blocked}`, log.nextAction && `次: ${log.nextAction}`].filter(Boolean).join(" / ")}</small>
+    </article>
+  );
+}
+
+function SongMemo({ song }: { song: StoredSong }) {
+  return (
+    <details className="panel mobile-details">
+      <summary>
+        詳細メモ
+        <span>{song.targetDate ? `目標 ${song.targetDate}` : "未設定"}</span>
+      </summary>
+      <p className="song-memo">{song.memo || "メモはまだありません。"}</p>
+    </details>
+  );
+}
+
+function SongSwitcher({ songs, selectedSongId }: { songs: StoredSong[]; selectedSongId: number }) {
+  return (
+    <details className="panel mobile-details">
+      <summary>
+        曲の切り替え・追加
+        <span>{songs.length}曲</span>
+      </summary>
+      <SongList songs={songs} selectedSongId={selectedSongId} />
+      <details className="inline-details">
+        <summary>曲追加フォームを開く</summary>
+        <SongForm />
+      </details>
+    </details>
   );
 }
 

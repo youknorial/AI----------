@@ -537,3 +537,267 @@ textarea:focus {
     display: grid;
   }
 }
+
+/* Mobile-first DTM app surface */
+.mobile-app {
+  max-width: 760px;
+  padding: 14px;
+}
+
+.mobile-topbar {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.mobile-topbar h1 {
+  font-size: 22px;
+  letter-spacing: 0;
+  margin: 4px 0 0;
+}
+
+.mobile-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.today-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.today-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.today-header h2 {
+  font-size: 24px;
+  line-height: 1.2;
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.today-rate {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 82px;
+  padding: 10px;
+  text-align: center;
+}
+
+.today-rate strong {
+  display: block;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.today-rate span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-top: 5px;
+}
+
+.mobile-progress {
+  height: 12px;
+}
+
+.today-action {
+  background: #f4fbf8;
+  border: 1px solid rgba(31, 122, 109, 0.2);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.today-action small {
+  color: var(--accent);
+  display: block;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.today-action p {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.45;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.next-step-strip {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 10px 12px;
+}
+
+.next-step-strip span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.primary-link-button {
+  align-items: center;
+  background: var(--accent);
+  border-radius: 8px;
+  color: #fff;
+  display: flex;
+  font-weight: 800;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 18px;
+  text-decoration: none;
+}
+
+.mobile-details {
+  padding: 0;
+}
+
+.mobile-details > summary,
+.inline-details > summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-weight: 800;
+  gap: 12px;
+  justify-content: space-between;
+  list-style: none;
+  min-height: 56px;
+  padding: 0 16px;
+}
+
+.mobile-details > summary::-webkit-details-marker,
+.inline-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mobile-details > summary::after,
+.inline-details > summary::after {
+  color: var(--muted);
+  content: "+";
+  font-size: 20px;
+  line-height: 1;
+}
+
+.mobile-details[open] > summary::after,
+.inline-details[open] > summary::after {
+  content: "-";
+}
+
+.mobile-details > summary span,
+.inline-details > summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  margin-left: auto;
+}
+
+.mobile-details > :not(summary) {
+  margin: 0 16px 16px;
+}
+
+.inline-details {
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+}
+
+.inline-details > summary {
+  min-height: 48px;
+  padding: 0;
+}
+
+.inline-details > :not(summary) {
+  margin-top: 12px;
+}
+
+.mobile-form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.compact-title {
+  margin-bottom: 10px;
+}
+
+.latest-log-panel {
+  padding: 16px;
+}
+
+.compact-empty {
+  min-height: 220px;
+  padding: 18px;
+}
+
+.progress-log-panel .goal-log-form {
+  margin-bottom: 0;
+}
+
+.step-list button {
+  min-height: 48px;
+}
+
+@media (min-width: 860px) {
+  .mobile-app {
+    max-width: 1040px;
+    padding: 28px;
+  }
+
+  .mobile-stack {
+    grid-template-columns: minmax(0, 1fr) 340px;
+    align-items: start;
+  }
+
+  .today-card,
+  .progress-log-panel,
+  .latest-log-panel {
+    grid-column: 1;
+  }
+
+  .mobile-stack > .mobile-details:nth-of-type(n + 2) {
+    grid-column: 2;
+  }
+
+  .mobile-form-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .today-header h2 {
+    font-size: 30px;
+  }
+}
+
+@media (max-width: 520px) {
+  .mobile-topbar {
+    display: grid;
+  }
+
+  .status-pill {
+    justify-self: start;
+  }
+
+  .today-header {
+    display: grid;
+  }
+
+  .today-rate {
+    align-items: baseline;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .today-rate span {
+    margin-top: 0;
+  }
+}
